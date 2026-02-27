@@ -6,6 +6,7 @@ WakeWord -> Recorder -> Transcriber -> IntentEngine -> Executor
 """
 
 import time
+from typing import Callable, Optional
 
 from loguru import logger
 
@@ -28,12 +29,20 @@ class AlaraPipeline:
     5. Action is dispatched to the executor.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        recorder: Optional[AudioRecorder] = None,
+        transcriber: Optional[Transcriber] = None,
+        intent_engine: Optional[IntentEngine] = None,
+        executor: Optional[Executor] = None,
+        on_wake_event: Optional[Callable[[], None]] = None,
+    ):
         logger.info("Initializing ALARA pipeline...")
-        self.recorder = AudioRecorder()
-        self.transcriber = Transcriber()
-        self.intent_engine = IntentEngine()
-        self.executor = Executor()
+        self.recorder = recorder or AudioRecorder()
+        self.transcriber = transcriber or Transcriber()
+        self.intent_engine = intent_engine or IntentEngine()
+        self.executor = executor or Executor()
+        self.on_wake_event = on_wake_event
         self._is_listening = False
 
         self.wake_detector = WakeWordDetector(on_detected=self._on_wake_word)
@@ -41,6 +50,12 @@ class AlaraPipeline:
 
     def _on_wake_word(self):
         """Called by WakeWordDetector when a wake event is triggered."""
+        if self.on_wake_event:
+            try:
+                self.on_wake_event()
+            except Exception as e:
+                logger.debug(f"Wake event callback failed: {e}")
+
         if self._is_listening:
             logger.debug("Already processing a command, ignoring wake trigger")
             return

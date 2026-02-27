@@ -1,39 +1,18 @@
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# requirements.txt — ALARA Intent Engine
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# For Python 3.13: Core intent engine dependencies only
-# For Python 3.11/3.10: Install all packages below + audio/OS packages
-# 
-# Python 3.13 Issues:
-# - pyaudio, faster-whisper need C compilation (no wheels yet)
-# - Use Python 3.11/3.10 for full functionality
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Intent engine (local Ollama)
-httpx==0.27.0
-
-# Data validation
+# Core
+python-dotenv==1.0.1
+loguru==0.7.2
+rich==13.7.1
 pydantic==2.8.2
 
-# Logging
-loguru==0.7.2
+# Intent engine
+google-generativeai==0.8.4
 
-# Terminal UI
-rich==13.7.1
+# STT backends
+faster-whisper==1.0.3
+deepgram-sdk==3.7.7
+numpy>=2.0.0
 
-# Environment variables
-python-dotenv==1.0.1
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# FUTURE: Add these when using Python 3.11+ for full pipeline
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# pyaudio==0.2.14                # Audio capture
-# sounddevice==0.4.6             # Audio input
-# numpy>=2.0.0                   # Numerical computing
-# openwakeword==0.6.0            # Wake word detection
-# faster-whisper==1.0.3          # Speech-to-text
-# pywinauto==0.6.8               # Windows automation
-# pywin32>=307                   # Windows APIs
-# playwright==1.46.0             # Browser automation
-# pystray==0.19.5                # System tray
-# Pillow==10.4.0                 # Image processing
+# Audio / wake word
+sounddevice==0.4.6
+openwakeword==0.6.0
+websockets==12.0

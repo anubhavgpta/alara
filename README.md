@@ -1,11 +1,11 @@
-# ALARA
+![ALARA Banner](./alara-banner.jpg)
 
 Ambient Language & Reasoning Assistant for Windows developers.
 ALARA provides a voice-first workflow that can listen, transcribe, classify intent, and execute actions across Windows, terminal, browser, and VS Code integrations.
 
-## Build Plan Alignment (Weeks 1-4)
+## Build Plan Alignment (Weeks 1-6)
 
-This repository was reviewed against `Alara_v1_Build_Plan.docx` for Weeks 1-2 and 3-4.
+This repository was reviewed against `Alara_v1_Build_Plan.docx` for Weeks 1-6.
 The following items are implemented and verified:
 
 ### Weeks 1-2: Foundation
@@ -35,7 +35,7 @@ The following items are implemented and verified:
 - Supported action set is explicitly constrained and validated.
 
 2. Prompt-engineered classifier with few-shot guidance:
-- Ollama-first classifier with structured JSON contract.
+- Gemini-first classifier with structured JSON contract.
 - Few-shot examples were added to the system prompt for higher classification consistency.
 
 3. JSON validation and malformed output recovery:
@@ -50,6 +50,41 @@ The following items are implemented and verified:
 5. Target accuracy:
 - The benchmark target is 90%+.
 - Current implementation was tuned and validated against the test suite.
+
+### Weeks 5-6: First 2 Integrations
+
+1. Windows OS module:
+- `integrations/windows_os.py` now performs real actions for:
+  `open_app`, `close_app`, `switch_app`, `minimize_window`, `maximize_window`,
+  `close_window`, `take_screenshot`, `open_file`, `open_folder`, `search_files`,
+  `volume_up`, `volume_down`, `volume_mute`, and `lock_screen`.
+
+2. Terminal module:
+- `integrations/terminal.py` now executes real commands.
+- Uses Windows Terminal (`wt`) when available, with PowerShell fallback.
+- Supports optional `cwd` routing for commands that require a specific folder.
+
+3. End-to-end flow coverage:
+- Intent normalization now handles commands like:
+  `open a terminal in my projects folder and run git status`
+  as `run_command` with resolved working directory.
+
+4. Reliability test coverage:
+- Added `tests/test_week56_integrations.py` to validate core Week 5-6 behavior via mocks.
+
+### Overlay UI + WS Bridge
+
+1. WebSocket bridge:
+- `core/ws_server.py` exposes `ws://localhost:8765` for Electron UI communication.
+- Supports text commands, start/stop listening, result/status streaming, and wake broadcasts.
+
+2. Electron overlay:
+- `ui/` contains a Spotlight-style top overlay with global hotkey toggle.
+- UI sends command/listening events to Python and receives state/result updates.
+
+3. Shared backend instances:
+- `--ui` mode in `main.py` starts pipeline + WebSocket server with shared
+  `IntentEngine`, `Executor`, `Transcriber`, and `AudioRecorder`.
 
 ## Additional Cleanups Applied During This Review
 
@@ -87,12 +122,18 @@ alara/
 |   |-- transcriber.py
 |   |-- intent_engine.py
 |   |-- executor.py
+|   |-- ws_server.py
 |   `-- pipeline.py
 |-- integrations/
 |   |-- windows_os.py
 |   |-- terminal.py
 |   |-- browser.py
 |   `-- vscode.py
+|-- ui/
+|   |-- main.js
+|   |-- preload.js
+|   |-- index.html
+|   `-- package.json
 |-- tests/
 |   |-- test_intent.py
 |   `-- test_results.json
@@ -106,7 +147,8 @@ alara/
 
 - Windows 10/11
 - Python 3.11+
-- Ollama installed and running
+- Node.js 18+ (for Electron UI)
+- Gemini API key
 - Optional NVIDIA GPU for faster transcription
 
 ### Install
@@ -127,11 +169,15 @@ copy .env.example .env
 notepad .env
 ```
 
-### Ollama model
+### Gemini API
 
 ```powershell
-ollama pull mistral
+notepad .env
 ```
+
+Set at least:
+- `GEMINI_API_KEY=...`
+- Optional: `GEMINI_MODEL=gemini-2.5-flash`
 
 ## Usage
 
@@ -143,6 +189,15 @@ python -m alara.main --test-wake-word
 python -m alara.main --test-intent
 python -m alara.main --test-full
 python -m alara.main
+python -m alara.main --ui
+```
+
+Electron UI (new terminal):
+
+```powershell
+cd ui
+npm install
+npm start
 ```
 
 ## Intent Test Suite
@@ -166,5 +221,5 @@ The suite reports:
 
 ## Notes on Scope
 
-This repository currently covers Weeks 1-4 execution paths.
-Build plan items from Weeks 5-10 (deeper integration reliability, memory/context, packaging/tray, beta-user loops) remain future work.
+This repository currently covers Weeks 1-6 plus a working Electron overlay + WebSocket bridge.
+Build plan items from Weeks 7-10 (deeper VS Code/browser integrations, memory/context polish, packaging/tray hardening, beta-user loops) remain future work.

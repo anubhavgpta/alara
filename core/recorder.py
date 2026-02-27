@@ -7,6 +7,7 @@ Returns WAV bytes for the transcriber.
 
 import io
 import os
+import threading
 import wave
 
 import numpy as np
@@ -29,6 +30,7 @@ class AudioRecorder:
     def __init__(self):
         self.silence_timeout_ms = int(os.getenv("SILENCE_TIMEOUT_MS", 1500))
         self.max_duration_s = 15
+        self._stop_event = threading.Event()
 
     def _is_silent(self, audio_chunk: np.ndarray) -> bool:
         rms = np.sqrt(np.mean(audio_chunk.astype(np.float32) ** 2))
@@ -37,6 +39,7 @@ class AudioRecorder:
     def record(self) -> bytes:
         """Record until silence is detected, then return WAV bytes."""
         logger.info("Recording command...")
+        self._stop_event.clear()
         frames = []
         silent_chunks = 0
         total_chunks = 0
@@ -54,6 +57,9 @@ class AudioRecorder:
             blocksize=CHUNK_SIZE,
         ) as stream:
             while total_chunks < max_chunks:
+                if self._stop_event.is_set():
+                    logger.info("Recording stopped early")
+                    break
                 chunk, _ = stream.read(CHUNK_SIZE)
                 audio_np = np.frombuffer(chunk, dtype=np.int16)
                 frames.append(audio_np.copy())
@@ -88,3 +94,7 @@ class AudioRecorder:
             wf.writeframes(audio_np.tobytes())
         buf.seek(0)
         return buf.read()
+
+    def stop(self):
+        """Request current recording loop to stop."""
+        self._stop_event.set()

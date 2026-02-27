@@ -40,6 +40,38 @@ def run_full():
     pipeline.start()
 
 
+def run_ui_mode():
+    """Start backend services for Electron UI mode."""
+    from alara.core.executor import Executor
+    from alara.core.intent_engine import IntentEngine
+    from alara.core.pipeline import AlaraPipeline
+    from alara.core.recorder import AudioRecorder
+    from alara.core.transcriber import Transcriber
+    from alara.core.ws_server import AlaraWSServer, broadcast
+
+    recorder = AudioRecorder()
+    transcriber = Transcriber()
+    intent_engine = IntentEngine()
+    executor = Executor()
+
+    ws_server = AlaraWSServer(
+        intent_engine=intent_engine,
+        executor=executor,
+        transcriber=transcriber,
+        recorder=recorder,
+    )
+    ws_server.start_background()
+
+    pipeline = AlaraPipeline(
+        recorder=recorder,
+        transcriber=transcriber,
+        intent_engine=intent_engine,
+        executor=executor,
+        on_wake_event=lambda: broadcast({"type": "wake"}),
+    )
+    pipeline.start()
+
+
 def test_stt():
     """Record one command and print transcription."""
     from alara.core.recorder import AudioRecorder
@@ -117,6 +149,7 @@ def main():
     parser.add_argument("--test-intent", action="store_true", help="Test intent engine")
     parser.add_argument("--test-full", action="store_true", help="Test full pipeline by typing")
     parser.add_argument("--test-wake-word", action="store_true", help="Test wake word detection")
+    parser.add_argument("--ui", action="store_true", help="Start backend in Electron UI mode")
     args = parser.parse_args()
 
     if args.test_stt:
@@ -127,6 +160,8 @@ def main():
         test_full()
     elif args.test_wake_word:
         test_wake_word()
+    elif args.ui:
+        run_ui_mode()
     else:
         run_full()
 
