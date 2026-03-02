@@ -27,25 +27,52 @@ class WakeWordDetector:
     def __init__(self, on_detected: callable, threshold: float = None):
         self.on_detected = on_detected
         self.threshold = threshold or float(os.getenv("WAKE_WORD_THRESHOLD", 0.5))
-        self.wake_word = os.getenv("WAKE_WORD", "hey_jarvis")
+
+        # Derive both underscore and display variants from the same env var.
+        raw_wake = os.getenv("WAKE_WORD", "hey_jarvis").strip()
+        self.wake_word_model_name = raw_wake.replace(" ", "_")
+        self.wake_word_display = raw_wake.replace("_", " ")
+        # Backwards-compatible attribute if anything else inspects it.
+        self.wake_word = self.wake_word_display
         self._running = False
         self._thread = None
         self._model = None
         self._use_volume_fallback = False
 
     def _load_model(self):
-        logger.info(f"Loading wake word model: {self.wake_word}")
+        logger.info(f"Loading wake word model: {self.wake_word_display}")
+
+        # OpenWakeWord only ships a fixed set of pre-trained models. If the
+        # configured wake word doesn't correspond to a known model, fall back
+        # to the simpler volume-based detector but still keep the display name.
+        known_models = {
+            "alexa",
+            "hey_mycroft",
+            "hey_jarvis",
+            "hey_rhasspy",
+            "current_weather",
+            "timers",
+        }
+        if self.wake_word_model_name.lower() not in known_models:
+            logger.warning(
+                "No built-in OpenWakeWord model for '%s'; using volume-based wake detection instead.",
+                self.wake_word_display,
+            )
+            self._use_volume_fallback = True
+            return
+
         try:
             self._model = Model(
-                wakeword_models=[self.wake_word],
-                enable_speex_noise_suppression=True,
+                wakeword_models=[self.wake_word_model_name],
             )
             self._use_volume_fallback = False
-            logger.success("Wake word model loaded (OpenWakeWord)")
+            logger.success(f"Wake word model loaded (OpenWakeWord): {self.wake_word_display}")
         except Exception as e:
             logger.warning(
-                f"OpenWakeWord unavailable ({type(e).__name__}), "
-                "switching to volume-based fallback"
+                "OpenWakeWord unavailable (%s: %s) for model '%s', switching to volume-based fallback",
+                type(e).__name__,
+                str(e),
+                self.wake_word_display,
             )
             self._use_volume_fallback = True
 

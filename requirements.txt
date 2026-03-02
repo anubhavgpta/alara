@@ -6,13 +6,20 @@ pydantic==2.8.2
 
 # Intent engine
 google-generativeai==0.8.4
+sentence-transformers==3.0.1
+pyyaml==6.0.2
 
 # STT backends
 faster-whisper==1.0.3
 deepgram-sdk==3.7.7
 numpy>=2.0.0
+rapidfuzz==3.9.6
 
 # Audio / wake word
 sounddevice==0.4.6
+pyaudio==0.2.13
+librosa==0.10.2.post1
+noisereduce==3.0.2
+pyttsx3==2.98
 openwakeword==0.6.0
-websockets==12.0
+onnxruntime==1.24.2

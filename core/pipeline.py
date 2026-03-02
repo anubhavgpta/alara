@@ -63,6 +63,8 @@ class AlaraPipeline:
         self._is_listening = True
         try:
             self._process_command()
+        except Exception:
+            logger.exception("Command processing failed")
         finally:
             self._is_listening = False
 
