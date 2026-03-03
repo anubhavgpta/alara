@@ -5,15 +5,15 @@
 # ALARA
 **Ambient Language & Reasoning Assistant**
 
-ALARA is an agentic desktop AI platform for Windows that takes a natural language goal and executes it autonomously on your machine.
+ALARA is an agentic desktop AI platform for Windows that takes a natural language goal and decomposes it into an executable TaskGraph.
 
 Version: 0.2.0  |  Platform: Windows 10/11  |  Python: 3.11+
 
 ## Overview
 
-ALARA is an autonomous execution engine for desktop tasks. It is not a voice assistant, macro recorder, or conversational chatbot. A user provides a goal in natural language, and ALARA decomposes it into a structured execution plan, routes each step through the most reliable capability layer, verifies outcomes after every action, and self-corrects on failure without requiring step-by-step user intervention.
+ALARA is an autonomous planning engine for desktop tasks. It is not a voice assistant, macro recorder, or conversational chatbot. A user provides a goal in natural language, and ALARA decomposes it into a structured execution plan with typed steps, dependencies, verification methods, and fallback strategies.
 
-ALARA runs a fixed orchestration cycle of plan -> execute -> verify -> reflect -> retry. Each task step is typed, validated against expected outcomes, and recoverable through reflected replanning. The system does not advance through unresolved failure states.
+Current build focus: planning stack foundation (`GoalUnderstander` + `Planner` + `TaskGraph` rendering). Execution routing/orchestration is scaffolded and will be wired in subsequent builds.
 
 ## Capabilities
 
@@ -103,13 +103,17 @@ DB_PATH=alara.db
 
 ## Usage
 
-### Interactive Mode
+### Interactive Mode (Planner Preview)
 
 ```powershell
+# If your current directory is the parent repo directory:
 python -m alara.main
+
+# If your current directory is the package directory:
+python main.py
 ```
 
-ALARA starts a prompt loop. Enter a natural language goal and press Enter. ALARA plans, executes, and reports results inline.
+ALARA starts a prompt loop. Enter a natural language goal and press Enter. ALARA runs Goal Understanding + Planning and prints the TaskGraph in a Rich table.
 
 ### Single Goal Mode
 
@@ -117,7 +121,7 @@ ALARA starts a prompt loop. Enter a natural language goal and press Enter. ALARA
 python -m alara.main --goal "create a Python project called myapp"
 ```
 
-This mode executes one goal non-interactively and exits. It is suitable for scripting and deterministic test runs.
+This mode plans one goal non-interactively and exits.
 
 ### Debug Mode
 
@@ -125,7 +129,7 @@ This mode executes one goal non-interactively and exits. It is suitable for scri
 python -m alara.main --debug
 ```
 
-Debug mode emits verbose execution telemetry, including parsed goal context, task graph details, selected execution layer per step, verification outcomes, and reflection attempts.
+Debug mode prints parsed `GoalContext`, raw Gemini planner response, and additional TaskGraph metadata.
 
 ### Example Goals
 
@@ -137,6 +141,23 @@ Debug mode emits verbose execution telemetry, including parsed goal context, tas
 | "Rename all images in Desktop/photos to include today's date" | Enumerates image files, generates date-prefixed names, renames files, and verifies results. |
 | "Find the 10 largest files in Documents" | Scans recursively, sorts by file size, and prints a formatted top-10 report. |
 | "Install Python dependencies from requirements.txt" | Detects active virtual environment, runs `pip install -r requirements.txt`, and validates installed packages. |
+
+## Planner Validation Tests
+
+Run planner integration checks over 8 benchmark goals:
+
+```powershell
+# From parent repo directory:
+python -m tests.test_planner
+
+# From package directory:
+python -m tests.test_planner
+```
+
+Notes:
+- `GEMINI_API_KEY` must be set in `.env`.
+- The script exits with code `1` if any goal fails validation.
+- It validates step schema integrity, dependencies, verification methods, path normalization, and timestamp format.
 
 ## Project Structure
 
@@ -197,6 +218,7 @@ alara/
 ├── tests/
 │   ├── __init__.py               # Test package marker
 │   ├── test_intent.py            # Intent engine benchmark tests
+│   ├── test_planner.py           # Planner integration validation script
 │   └── test_week56_integrations.py # Integration behavior tests
 ├── ui/
 │   ├── alara.svg                 # Overlay brand asset
