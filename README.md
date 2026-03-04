@@ -5,163 +5,342 @@
 # ALARA
 **Ambient Language & Reasoning Assistant**
 
-ALARA is an agentic desktop AI platform for Windows that transforms natural language goals into executable tasks with comprehensive verification and adaptive error recovery.
+ALARA is an agentic desktop AI platform for Windows that transforms natural language goals into executable tasks on a real machine. It implements a complete autonomous loop: goal understanding, structured planning, capability-routed execution, programmatic verification, and LLM-powered adaptive error recovery — all backed by a persistent three-tier memory layer and exposed through a floating Electron overlay.
 
-Version: 0.2.0  |  Platform: Windows 10/11  |  Python: 3.11+
+**Version:** 0.2.0 &nbsp;|&nbsp; **Platform:** Windows 10/11 &nbsp;|&nbsp; **Python:** 3.11+ &nbsp;|&nbsp; **Model:** Gemini 2.5 Flash
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Core Pipeline](#core-pipeline)
+- [Memory Layer](#memory-layer)
+- [Capability Layer](#capability-layer)
+- [Overlay UI & WebSocket Server](#overlay-ui--websocket-server)
+- [Getting Started](#getting-started)
+- [Usage](#usage)
+- [Configuration Reference](#configuration-reference)
+- [Project Structure](#project-structure)
+- [Testing](#testing)
+- [Logging Standards](#logging-standards)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
 
 ## Overview
 
-ALARA is an autonomous planning and execution engine for desktop tasks. It is not a voice assistant, macro recorder, or conversational chatbot. A user provides a goal in natural language, and ALARA decomposes it into a structured execution plan with typed steps, dependencies, verification methods, and fallback strategies, then executes the plan with real-world verification and adaptive error recovery.
+ALARA is not a voice assistant, macro recorder, or conversational chatbot. It is an autonomous planning and execution engine for desktop tasks. A user provides a goal in natural language — via the overlay UI or terminal — and ALARA decomposes it into a structured `TaskGraph` of typed, ordered, verifiable steps, executes each step against real system state, validates outcomes programmatically, and recovers from failures using LLM-guided reflection.
 
-Current build: Complete execution engine with planning, routing, verification, and reflection capabilities fully operational.
+The system is designed around three principles:
+
+**Verification-first execution.** Every step has a declared verification method. Execution is not considered successful until the verifier confirms real-world state matches the expected outcome. ALARA does not trust exit codes alone.
+
+**Adaptive recovery.** When verification fails, the Reflector sends full execution context — original goal, complete plan, prior results, failure details — to Gemini and receives corrected actions or alternative paths. Recovery is not hardcoded; it is reasoned.
+
+**Persistent memory.** ALARA learns from every execution. Path aliases, tool preferences, and successful task patterns are stored in a SQLite-backed memory layer and injected into every subsequent planning invocation, making the system progressively more accurate over time.
+
+---
 
 ## Architecture
 
-ALARA implements a comprehensive orchestration loop consisting of five core components:
-
-### Core Components
-
-**Goal Understander:** Parses raw input into a structured `GoalContext` that captures normalized intent, operational scope, explicit constraints, inferred working directory, and estimated complexity.
-
-**Planner:** Sends `GoalContext` to Gemini 2.5 Flash using a constrained planning prompt and receives a typed `TaskGraph` of ordered atomic steps. Each step includes operation, parameters, expected outcome, verification method, dependencies, and fallback strategy.
-
-**Execution Router:** Selects the best execution layer for each step in strict priority order: native OS API, application adapter, CLI execution, then UI automation as a last resort.
-
-**Verifier:** Validates real-world state after each step against expected outcomes using programmatic checks such as file existence, process state, exit code status, port availability, and output inspection.
-
-**Reflector:** On failed verification, sends full execution context to Gemini, including original goal, full plan, prior step results, and failure details. Gemini returns corrected actions or alternative paths, and ALARA retries within configured limits.
-
-### Execution Flow
+### System Diagram
 
 ```text
-User Input
-    │
-    ▼
-Goal Understander ──► extracts scope, constraints, working directory
-    │
-    ▼
-Planner ──────────► decomposes goal into typed, ordered TaskGraph
-    │
-    ▼
-┌─────────────────────────────────────────┐
-│           Orchestration Loop            │
-│                                         │
-│   Execution Router                      │
-│   └─► Filesystem → CLI → System →      │
-│        App Adapter → UI Automation      │
-│              │                          │
-│   Verifier ◄─┘                          │
-│   └─► confirmed / failed                │
-│              │                          │
-│   Reflector (on failure)                │
-│   └─► replan → retry → skip → escalate  │
-└─────────────────────────────────────────┘
-    │
-    ▼
-Result
+┌─────────────────────────────────────────────────────────────┐
+│                     Electron Overlay                         │
+│              ws://localhost:8765 (WebSocket)                 │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│               WebSocket Server (async)                       │
+│         server/websocket_server.py                           │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+         ┌───────────────┼───────────────┐
+         ▼               ▼               ▼
+  Goal Understander    Planner      Memory Manager
+  (GoalContext)     (TaskGraph)   (context injection)
+         │               │               │
+         └───────────────▼───────────────┘
+                         │
+         ┌───────────────▼───────────────┐
+         │        Orchestrator           │
+         │   ┌─────────────────────┐     │
+         │   │  Execution Router   │     │
+         │   │  └► Filesystem      │     │
+         │   │  └► CLI             │     │
+         │   │  └► System          │     │
+         │   │  └► App Adapter     │     │
+         │   └──────────┬──────────┘     │
+         │              ▼                │
+         │          Verifier             │
+         │       (real-world check)      │
+         │              │                │
+         │    ┌─────────▼──────────┐     │
+         │    │     Reflector      │     │
+         │    │  (on failure only) │     │
+         │    └────────────────────┘     │
+         └───────────────────────────────┘
+                         │
+         ┌───────────────▼───────────────┐
+         │         Memory Layer          │
+         │  Session │ Preferences │ Skills│
+         │       SQLite + WAL mode        │
+         └───────────────────────────────┘
 ```
 
-## Capabilities
+---
 
-### Filesystem Operations
-- **Directory Management:** Create, delete, move, and list directories with parent directory auto-creation
-- **File Operations:** Create, read, write, copy, move, and delete files with content verification
-- **Path Resolution:** Support for Windows environment variables (`$env:USERPROFILE`, `$HOME`) and user home expansion (`~`)
-- **Search & Discovery:** Recursive file pattern matching and absolute path enumeration
-- **Verification:** Real-world state checking including path existence, content validation, and directory non-emptiness
+## Core Pipeline
 
-### Command Line Interface
-- **Command Execution:** Run shell commands with configurable timeouts and working directories
-- **Output Capture:** Comprehensive stdout/stderr capture with return code tracking
-- **Environment Control:** Working directory resolution and validation before execution
-- **Error Handling:** Graceful timeout handling and exception capture with detailed metadata
+### Goal Understander
 
-### System Integration
-- **Environment Variables:** Read and set system and user environment variables with Windows-specific handling
-- **Process Management:** Check running processes via Windows tasklist with psutil fallback
-- **System Queries:** Retrieve system information and validate system state
+`core/goal_understander.py`
 
-### Verification & Validation
-- **Path Verification:** File and directory existence checking with resolved path validation
-- **Content Verification:** File content inspection for expected text and patterns
-- **Process Verification:** Running process validation with fresh checking capability
-- **Network Verification:** Port availability checking with host connectivity validation
-- **Output Verification:** Command output inspection for expected content and patterns
-- **Exit Code Verification:** Process exit code validation for success/failure determination
+Parses raw natural language input into a structured `GoalContext` using Gemini 2.5 Flash. Extracts normalized goal intent, operational scope (`filesystem`, `cli`, `mixed`, `system`), explicit constraints, inferred working directory, and estimated complexity (`simple`, `moderate`, `complex`). Implements a guaranteed `from_raw` fallback — the understander never raises, ensuring the pipeline always receives a valid context object.
 
-### Adaptive Error Recovery
-- **Intelligent Reflection:** LLM-powered failure analysis with context-aware alternative generation
-- **Retry Logic:** Configurable retry attempts with modified step parameters and approaches
-- **Fallback Strategies:** Optional step skipping and escalation to human intervention
-- **Context Preservation:** Full execution context maintenance for reflection decisions
+### Planner
 
-## Implementation Details
+`core/planner.py`
 
-### Capability Layer Architecture
+Receives a `GoalContext` and a `MemoryContext` from the memory layer and sends both to Gemini 2.5 Flash via a constrained planning prompt. The prompt enforces atomic step decomposition, absolute path generation, Windows/PowerShell-compatible commands, and a fixed set of whitelisted operations and verification methods. Returns a fully validated `TaskGraph`.
 
-All capabilities inherit from a standardized `BaseCapability` interface:
+Platform context is injected at planning time — the planner provides Gemini with the machine's absolute paths for all common user directories (`Desktop`, `Documents`, `Downloads`, `Pictures`, `Videos`, `Music`, `AppData`) so all generated paths are fully qualified and never relative to the process working directory.
+
+The planner includes:
+- Single JSON retry on malformed responses with a stricter prompt
+- Enum casing normalization (`step_type` and `preferred_layer` forced to lowercase before Pydantic validation)
+- Path normalization across all path-bearing fields using `pathlib.Path.as_posix()`
+- `last_raw_response` property for debug inspection
+
+### TaskGraph Validation
+
+`schemas/task_graph.py`
+
+`TaskGraph` performs structural validation on construction:
+1. Rejects empty step lists
+2. Detects and renumbers duplicate step IDs, remapping all `depends_on` references
+3. Validates all `depends_on` targets exist post-normalization
+4. Runs DFS cycle detection, raising `ValueError` with the full cycle path if found
+
+`next_pending_step()` returns the first `PENDING` step whose dependencies are all `DONE`. `SKIPPED`, `FAILED`, and `RUNNING` statuses do not satisfy dependency requirements.
+
+### Orchestrator
+
+`core/orchestrator.py`
+
+Executes a `TaskGraph` through the full orchestration loop with a maximum of 3 retries per step:
+
+```
+get next pending step
+        ↓
+route to capability layer
+        ↓
+execute step → increment attempts
+        ↓
+verify real-world outcome
+        ↓ (on failure)
+retry if attempts < MAX_RETRIES
+        ↓ (on max retries)
+invoke Reflector → apply modified step / skip / escalate
+```
+
+The Orchestrator accepts an optional `progress_callback` invoked after each step state change, used by the WebSocket server to stream real-time progress to the Electron overlay.
+
+### Execution Router
+
+`core/execution_router.py`
+
+Routes each `Step` to the correct capability based on `step_type` and `preferred_layer` in strict priority order: `FilesystemCapability` → `CLICapability` → `SystemCapability` → app adapter fallback → UI automation fallback. Unimplemented layers log a `WARNING` and fall back to CLI where possible. Vision capability returns an explicit `CapabilityResult.fail` with a clear message.
+
+### Verifier
+
+`core/verifier.py`
+
+Validates real-world state after every step execution. Verification is not optional — every step declares a `verification_method` and the Verifier executes the appropriate check:
+
+| Method | What is checked |
+|---|---|
+| `check_path_exists` | File or directory exists on disk |
+| `check_file_contains` | File content includes expected text |
+| `check_exit_code_zero` | Command returned exit code 0 |
+| `check_process_running` | Named process is active in tasklist |
+| `check_port_open` | TCP port accepts connections |
+| `check_output_contains` | Command output includes expected content |
+| `check_directory_not_empty` | Directory exists and has at least one entry |
+| `none` | No verification required — always passes |
+
+Unknown verification methods log a `WARNING` and pass rather than raising, preserving pipeline stability.
+
+### Reflector
+
+`core/reflector.py`
+
+Invoked when a step exhausts its retry budget. Sends full execution context to Gemini 2.5 Flash at `temperature=0.3` and receives one of three actions:
+
+- **retry** — Gemini provides a modified step with corrected operation, parameters, or approach. The Orchestrator applies the modification, resets `attempts` to 0, and retries.
+- **skip** — Step is marked `SKIPPED` and execution continues with dependent steps unblocked where possible.
+- **escalate** — Step is marked `FAILED`, the failure reason is recorded, and the Orchestrator terminates the task.
+
+The Reflector never raises. On any API or parse failure it returns `action="escalate"` with the error message as the reason.
+
+---
+
+## Memory Layer
+
+`memory/`
+
+A production-ready, thread-safe, SQLite-backed memory system with three tiers. All access is through the `MemoryManager` singleton. The database runs in WAL mode for concurrent read access. Schema versioning is implemented from day one with a migration hook for future schema evolution.
+
+### Session Memory
+
+`memory/session.py`
+
+Tracks every goal execution within and across sessions. Each `SessionEntry` records the original goal, scope, final status (`success`, `partial`, `failed`), step counts, full execution log, and UTC timestamps. Queryable by recency, session ID, and goal text search.
+
+### Preference Memory
+
+`memory/preferences.py`
+
+Persistent key-value store for user preferences, tool choices, and path aliases. Preferences carry confidence scores, usage counts, and provenance (`user_explicit`, `inferred`, `default`). Seeded with platform defaults on first run.
+
+**Automatic inference:** After every successful execution, `infer_from_execution()` extracts path aliases from step parameters (mapping noun phrases in the goal to absolute paths used), tool preferences from CLI commands, and package patterns from `pip install` invocations. Inference is wrapped in `try/except` and never affects the execution flow.
+
+**Path aliases** are the most impactful feature — once ALARA learns that "my projects folder" maps to `C:/Users/Anubhav Gupta/Desktop/Projects`, that mapping is injected into every subsequent planning invocation via the memory context summary.
+
+### Skill Memory
+
+`memory/skills.py`
+
+Stores successful `TaskGraph` executions as reusable templates. Skills are retrieved using word-overlap similarity search with a composite ranking score:
+
+```
+score = (overlap × 0.6) + (success_rate × 0.3) + (recency × 0.1)
+```
+
+Where `success_rate = success_count / (success_count + failure_count + 1)` and `recency = 1.0` if used within 7 days, `0.5` within 30 days, `0.0` otherwise. Skills with similarity above 0.8 are deduplicated — repeated similar goals update the existing skill's statistics rather than creating a new entry.
+
+### Memory Context Injection
+
+Before every planning invocation, `MemoryManager.build_context()` assembles a `MemoryContext` containing recent goals, relevant skills, relevant preferences, and all known path aliases. This context is serialized as a structured summary string and appended to the Gemini planning prompt, giving the planner awareness of prior work without requiring conversational state.
+
+### Database
+
+`memory/database.py`
+
+Thread-safe singleton `DatabaseManager` with per-call connections (not shared), WAL journal mode, foreign key enforcement, and retry logic on `OperationalError: database is locked` (3 attempts with 100ms backoff). Indexed on `sessions.created_at`, `sessions.session_id`, `skills.scope`, `preferences.category`, and `preferences.key` for sub-100ms `build_context()` performance.
+
+---
+
+## Capability Layer
+
+All capabilities inherit from `BaseCapability` and implement a single entry point:
 
 ```python
 class BaseCapability(ABC):
     @abstractmethod
     def execute(self, operation: str, params: dict) -> CapabilityResult:
-        """Execute one operation with operation-specific params."""
-    
+        ...
+
     def supports(self, operation: str) -> bool:
-        """Return whether this capability handles the operation."""
         return False
 ```
 
-### Result Standardization
+All operations return `CapabilityResult` and never raise — exceptions are caught internally and returned as `CapabilityResult.fail(error=str(e))`.
 
-All operations return structured `CapabilityResult` objects:
+### FilesystemCapability
 
-```python
-@dataclass
-class CapabilityResult:
-    success: bool
-    output: str | None = None
-    error: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-```
+`capabilities/filesystem.py`
 
-### Path Resolution
+Uses `pathlib.Path` exclusively. Supports: `create_directory`, `create_file`, `write_file`, `read_file`, `delete_file`, `delete_directory`, `move_file`, `copy_file`, `list_directory`, `search_files`, `check_path_exists`.
 
-Comprehensive Windows path handling with support for:
-- User home expansion (`~`)
-- Environment variable substitution (`$HOME`, `$env:USERPROFILE`)
-- Absolute and relative path resolution
-- Cross-platform compatibility using `pathlib.Path`
+Path resolution via `_resolve(path: str) -> Path` handles all Windows path variants in order:
+1. Substitute `$env:USERPROFILE`, `%USERPROFILE%`, `$env:HOME`, `$HOME`
+2. Expand `~` via `Path.expanduser()`
+3. Anchor remaining relative paths to `Path.home()` — nothing resolves relative to the process working directory
 
-### Verification Methods
+### CLICapability
 
-The verifier supports multiple verification strategies:
-- `check_path_exists`: Validates file/directory existence
-- `check_file_contains`: Inspects file content for expected text
-- `check_exit_code_zero`: Validates successful command execution
-- `check_process_running`: Confirms process availability
-- `check_port_open`: Validates network port accessibility
-- `check_output_contains`: Inspects command output
-- `check_directory_not_empty`: Validates directory contents
-- `none`: Bypasses verification for non-critical steps
+`capabilities/cli.py`
 
-### Reflection & Recovery
+Executes shell commands via `subprocess.run(shell=True, capture_output=True, text=True)`. Captures stdout, stderr, and returncode. Working directory resolved via `_resolve_dir()` using the same path resolution logic as `FilesystemCapability`. Default timeout read from `STEP_TIMEOUT_S` environment variable (default 30s). Both stdout and stderr included in result metadata for Reflector context.
 
-The reflector implements sophisticated error recovery:
-- **Context Analysis**: Full execution context including goal, plan, and failure details
-- **Alternative Generation**: LLM-powered generation of modified approaches
-- **Action Decision**: Intelligent selection between retry, skip, or escalate actions
-- **Step Modification**: Dynamic parameter and approach adjustment for retries
+### SystemCapability
+
+`capabilities/system.py`
+
+Handles `get_env_var` (with Windows-specific fallback chain: `USERPROFILE` → `HOMEDRIVE+HOMEPATH` when `HOME` is requested), `set_env_var`, and `check_process` via `tasklist /FI`.
+
+---
+
+## Overlay UI & WebSocket Server
+
+### WebSocket Server
+
+`server/websocket_server.py`
+
+Async WebSocket server on `ws://localhost:8765` using the `websockets` library. All blocking pipeline operations (understand, plan, orchestrate) run in `asyncio.run_in_executor` to avoid blocking the event loop. The `progress_callback` dispatches step progress messages to the connected client thread-safely via `asyncio.run_coroutine_threadsafe`.
+
+#### Message Protocol
+
+**Client → Server:**
+
+| Message | Description |
+|---|---|
+| `{ "type": "goal_submit", "goal": "..." }` | Submit a new goal for planning |
+| `{ "type": "goal_confirm" }` | Confirm and execute the current plan |
+| `{ "type": "goal_cancel" }` | Cancel the current plan |
+| `{ "type": "ping" }` | Keepalive |
+
+**Server → Client:**
+
+| Message | Description |
+|---|---|
+| `{ "type": "status", "message": "..." }` | General status update |
+| `{ "type": "plan_ready", "goal", "steps", "scope", "complexity", "step_count" }` | Plan ready for confirmation |
+| `{ "type": "execution_started", "total_steps" }` | Orchestration has begun |
+| `{ "type": "step_progress", "step_id", "operation", "description", "status", "steps_done", "steps_total", "progress_pct" }` | Per-step progress update |
+| `{ "type": "execution_complete", "success", "steps_completed", "steps_failed", "steps_skipped", "total_steps", "message" }` | Task complete |
+| `{ "type": "error", "message" }` | Pipeline error |
+| `{ "type": "pong" }` | Keepalive response |
+
+### Electron Overlay
+
+`electron/`
+
+A frameless, always-on-top transparent overlay window built with Electron. Triggered globally with `Ctrl+Space` (fallback: `Ctrl+Shift+Space`). WebSocket connection is managed from the main process with automatic reconnection on disconnect (2s backoff).
+
+**Interaction flow:**
+1. `Ctrl+Space` → overlay appears, input focused
+2. User types goal → presses Enter → `goal_submit` sent
+3. Server responds with `plan_ready` → step list rendered, window resizes to fit
+4. User clicks Execute → `goal_confirm` sent
+5. Determinate progress bar fills as `step_progress` messages arrive
+6. `execution_complete` → result shown → auto-dismiss after 3s → overlay hides
+
+**UI states:**
+
+| State | Indicator | Description |
+|---|---|---|
+| Ready | White | Waiting for input |
+| Planning | Purple (#9B59FF) | Decomposing goal into steps |
+| Awaiting confirm | Purple | Plan rendered, awaiting user confirmation |
+| Executing | Blue (#3B9EFF) | Running steps with progress bar |
+| Done | Green (#2ECC71) | Task completed successfully |
+| Failed | Red (#E74C3C) | Task failed after maximum retries |
+
+---
 
 ## Getting Started
 
 ### Prerequisites
 
-ALARA requires Python 3.11 or later. An NVIDIA GPU is optional and not required for this release. Gemini API access is required before setup.
-
-**Gemini API Key**
-
-ALARA uses Gemini 2.5 Flash for planning and reflection. Create a free API key at `https://aistudio.google.com`.
+- Python 3.11 or later
+- Node.js 18 or later (for Electron overlay)
+- Gemini API key from [Google AI Studio](https://aistudio.google.com)
 
 ### Installation
 
@@ -173,11 +352,21 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+Install Electron dependencies:
+
+```powershell
+cd electron
+npm install
+cd ..
+```
+
 ### Configuration
 
 ```powershell
 copy .env.example .env
 ```
+
+Edit `.env`:
 
 ```env
 GEMINI_API_KEY=your_key_here
@@ -188,167 +377,204 @@ LOG_FILE=alara.log
 DB_PATH=alara.db
 ```
 
+---
+
 ## Usage
 
-### Interactive Mode
+### Terminal Mode
 
 ```powershell
-# If your current directory is the parent repo directory:
+# Interactive prompt loop
 python -m alara.main
 
-# If your current directory is the package directory:
-python main.py
-```
-
-ALARA starts a prompt loop. Enter a natural language goal and press Enter. ALARA runs the complete planning and execution pipeline with real-time progress feedback.
-
-### Single Goal Mode
-
-```powershell
+# Single goal, auto-confirm
 python -m alara.main --goal "create a Python project called myapp"
-```
 
-This mode plans and executes one goal non-interactively with auto-confirmation.
-
-### Debug Mode
-
-```powershell
+# Debug mode — prints GoalContext, raw Gemini response,
+# execution log, memory context, and memory health
 python -m alara.main --debug
 ```
 
-Debug mode prints parsed `GoalContext`, raw Gemini planner response, execution logs, and detailed verification results.
+### Overlay + WebSocket Mode
+
+Start the backend server and the Electron overlay in separate terminals:
+
+```powershell
+# Terminal 1
+start_server.bat
+
+# Terminal 2
+start_ui.bat
+```
+
+Or manually:
+
+```powershell
+# Terminal 1
+.venv\Scripts\activate
+python -m alara.server.websocket_server
+
+# Terminal 2
+cd electron
+npx electron .
+```
+
+Press `Ctrl+Space` to toggle the overlay.
 
 ### Example Goals
 
 | Goal | What ALARA Does |
 |---|---|
-| "Create a FastAPI project called myapp with a venv" | Scaffolds the project directory, creates a virtual environment, installs FastAPI, and generates `main.py` with a hello-world route. |
-| "Find all .log files in Downloads and delete them" | Searches for matching files, deletes each match, and verifies deletion. |
-| "Set up a git repository in my current project folder" | Runs `git init`, creates a Python `.gitignore`, and makes an initial commit. |
-| "Rename all images in Desktop/photos to include today's date" | Enumerates image files, generates date-prefixed names, renames files, and verifies results. |
-| "Find the 10 largest files in Documents" | Scans recursively, sorts by file size, and prints a formatted top-10 report. |
-| "Install Python dependencies from requirements.txt" | Detects active virtual environment, runs `pip install -r requirements.txt`, and validates installed packages. |
-| "Create a folder called test on my desktop" | Creates the specified directory with path resolution and existence verification. |
-| "Create a file called hello.txt on my desktop with the text 'Hello World'" | Creates the file with specified content and verifies file creation and content. |
+| `create a Python project called myapp with a venv` | Creates directory, initializes virtual environment, verifies both |
+| `set up a FastAPI project with postgres called myapp_db` | Scaffolds full project structure, creates venv, installs FastAPI, asyncpg, SQLAlchemy, generates `main.py` and `.env`, installs python-dotenv |
+| `create a folder called output in the documents folder inside downloads` | Resolves nested path to `C:/Users/.../Downloads/Documents/output`, creates both directories with dependency ordering |
+| `install requests in the testapp virtual environment` | Locates venv Python executable, runs pip install, verifies exit code |
+| `find all .tmp files in Downloads and delete them` | Searches for matches, deletes each, verifies deletion |
+| `create a folder called testwork in downloads and write a file called notes.txt with the text hello from alara` | Creates directory, writes file with content, verifies `check_file_contains` |
 
-## Testing
-
-### Planner Validation Tests
-
-Run planner integration checks over 8 benchmark goals:
-
-```powershell
-# From parent repo directory:
-python -m tests.test_planner
-
-# From package directory:
-python -m tests.test_planner
-```
-
-Notes:
-- `GEMINI_API_KEY` must be set in `.env`.
-- The script exits with code `1` if any goal fails validation.
-- It validates step schema integrity, dependencies, verification methods, path normalization, and timestamp format.
-
-### End-to-End Execution Tests
-
-The execution engine has been validated with comprehensive test scenarios:
-
-```powershell
-# Test filesystem operations
-python -m alara.main --goal "create a folder called test on my desktop"
-
-# Test file creation with content
-python -m alara.main --goal "create a file called hello.txt on my desktop with the text 'Hello World'"
-
-# Test directory listing
-python -m alara.main --debug --goal "list the contents of my desktop"
-```
-
-## Project Structure
-
-```text
-alara/
-├── .env.example                  # Environment variable template
-├── .gitignore                    # Git ignore rules
-├── __init__.py                   # Package marker
-├── alara-banner.jpg              # README banner image
-├── main.py                       # CLI entrypoint and orchestration loop
-├── README.md                     # Product documentation
-├── requirements.txt              # Python dependencies
-├── test_results.json             # Test output artifact
-├── capabilities/
-│   ├── __init__.py               # Capabilities package marker
-│   ├── base.py                   # Capability base contract and result types
-│   ├── cli.py                    # CLI execution capability with subprocess handling
-│   ├── filesystem.py             # Filesystem execution capability with pathlib
-│   ├── system.py                 # System operations capability
-│   └── windows/
-│       ├── __init__.py           # Windows capabilities marker
-│       ├── app_adapters.py       # App adapter capability
-│       ├── os_control.py         # Native Windows control capability
-│       └── ui_automation.py      # UI automation fallback capability
-├── core/
-│   ├── __init__.py               # Core package marker
-│   ├── execution_router.py       # Step-to-capability routing logic
-│   ├── goal_understander.py      # Raw goal to GoalContext extraction
-│   ├── orchestrator.py           # Complete orchestration loop implementation
-│   ├── planner.py                # GoalContext to TaskGraph planning
-│   ├── reflector.py              # Failure reflection and adaptive recovery
-│   └── verifier.py               # Step outcome verification with multiple methods
-├── schemas/
-│   ├── __init__.py               # Schemas package marker
-│   ├── goal.py                   # GoalContext schema
-│   └── task_graph.py             # TaskGraph and step schemas with validation
-├── tests/
-│   ├── __init__.py               # Test package marker
-│   ├── test_planner.py           # Planner integration validation script
-│   └── test_week56_integrations.py # Integration behavior tests
-└── utils/
-    ├── __init__.py               # Utilities package marker
-    └── platform.py               # Platform/path helpers
-```
+---
 
 ## Configuration Reference
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| GEMINI_API_KEY | — | Yes | Gemini 2.5 Flash API key for planning and reflection. |
-| MAX_RETRIES | 3 | No | Maximum retry attempts per step before escalation. |
-| STEP_TIMEOUT_S | 30 | No | Timeout in seconds per step execution. |
-| DEBUG | false | No | Enables verbose logging output and execution details. |
-| LOG_FILE | alara.log | No | Log file path for persistent logging. |
-| DB_PATH | alara.db | No | SQLite memory database path. |
+| `GEMINI_API_KEY` | — | Yes | Gemini 2.5 Flash API key for planning and reflection |
+| `MAX_RETRIES` | `3` | No | Maximum retry attempts per step before Reflector invocation |
+| `STEP_TIMEOUT_S` | `30` | No | Per-step CLI execution timeout in seconds |
+| `DEBUG` | `false` | No | Enables verbose output including raw Gemini responses |
+| `LOG_FILE` | `alara.log` | No | Path for persistent log output |
+| `DB_PATH` | `alara.db` | No | SQLite memory database path |
+
+---
+
+## Project Structure
+
+```text
+alara/
+├── .env.example
+├── .gitignore
+├── __init__.py
+├── alara-banner.jpg
+├── main.py                          # CLI entrypoint and prompt loop
+├── README.md
+├── requirements.txt
+├── start_server.bat                 # Starts WebSocket backend
+├── start_ui.bat                     # Starts Electron overlay
+│
+├── capabilities/
+│   ├── base.py                      # BaseCapability, CapabilityResult
+│   ├── cli.py                       # subprocess-based CLI execution
+│   ├── filesystem.py                # pathlib-based filesystem operations
+│   ├── system.py                    # env vars, process checking
+│   └── windows/
+│       ├── app_adapters.py
+│       ├── os_control.py
+│       └── ui_automation.py
+│
+├── core/
+│   ├── execution_router.py          # Step-to-capability routing
+│   ├── goal_understander.py         # Raw input → GoalContext
+│   ├── orchestrator.py              # Full orchestration loop
+│   ├── planner.py                   # GoalContext → TaskGraph
+│   ├── reflector.py                 # Failure reflection and recovery
+│   └── verifier.py                  # Post-step verification
+│
+├── electron/
+│   ├── main.js                      # Main process, hotkey, WebSocket client
+│   ├── preload.js                   # Context bridge
+│   ├── index.html                   # Overlay UI
+│   └── package.json
+│
+├── memory/
+│   ├── __init__.py                  # MemoryManager singleton
+│   ├── database.py                  # DatabaseManager, migrations, WAL
+│   ├── models.py                    # SessionEntry, PreferenceEntry, SkillEntry
+│   ├── preferences.py               # Preferences, path aliases, inference
+│   ├── session.py                   # Session tracking and history
+│   └── skills.py                    # Skill storage and similarity search
+│
+├── schemas/
+│   ├── goal.py                      # GoalContext
+│   └── task_graph.py                # TaskGraph, Step, StepResult, enums
+│
+├── server/
+│   ├── __init__.py
+│   └── websocket_server.py          # Async WebSocket server
+│
+├── tests/
+│   ├── test_planner.py              # 8-goal planner integration suite
+│   └── test_week56_integrations.py
+│
+└── utils/
+    └── platform.py
+```
+
+---
+
+## Testing
+
+### Planner Integration Tests
+
+Validates the planning stack against 8 benchmark goals with 14 assertions per goal covering step schema integrity, dependency graph correctness, enum validity, verification method whitelist compliance, path normalization, and timestamp format.
+
+```powershell
+python -m tests.test_planner
+```
+
+Exits with code `1` if any assertion fails. Requires `GEMINI_API_KEY` in `.env`.
+
+### Memory Layer Health Check
+
+```powershell
+python -c "
+from dotenv import load_dotenv
+load_dotenv()
+from alara.memory import MemoryManager
+import json
+print(json.dumps(MemoryManager.get_instance().health_check(), indent=2))
+"
+```
+
+### End-to-End Execution
+
+```powershell
+python -m alara.main --debug --goal "create a folder called test on my desktop"
+```
+
+---
 
 ## Logging Standards
 
-ALARA implements comprehensive logging across all components:
+| Component | INFO | WARNING | ERROR |
+|---|---|---|---|
+| Orchestrator | Step start, step success, retry notice, skip notice | Step failure, verification failure, fallback used | Step escalated, unrecoverable failure |
+| Router | — | Capability not implemented, fallback used | Routing exception |
+| Verifier | — | Unknown verification method | — |
+| Reflector | Reflection started, action decided | Parse failure, fallback to escalate | API failure |
+| Capabilities | Operation, resolved path, command | Path not found, non-zero exit | Exception during execution |
+| Memory | Initialization, successful stores | Inference failures, memory update failures | Database errors |
+| WebSocket Server | Client connected/disconnected | Send failure | Pipeline exception |
 
-- **Orchestrator:** INFO for step lifecycle events, WARNING for failures, ERROR for unrecoverable errors
-- **Router:** WARNING for capability fallbacks, ERROR for routing exceptions
-- **Verifier:** DEBUG for verification details, WARNING for unknown methods
-- **Reflector:** INFO for reflection decisions, WARNING for parse failures, ERROR for API failures
-- **Capabilities:** DEBUG for operation details, WARNING for expected failures, ERROR for exceptions
+---
 
-## Overlay UI
+## Roadmap
 
-ALARA includes an Electron-based floating overlay triggered system-wide with `Ctrl+Space`. The overlay behaves as a command palette for submitting goals and observing execution state in real time, and communicates with the backend over local WebSocket `ws://localhost:8765`.
+### Near Term
+- **Voice input** — Deepgram streaming integrated into the overlay via microphone button
+- **VS Code adapter** — Open projects, create files, run terminals within VS Code
+- **Browser adapter** — Tab creation, navigation, and form interaction via CDP
 
-| State | Indicator Color | Meaning |
-|---|---|---|
-| Ready | White | Waiting for input. |
-| Planning | Purple | Decomposing goal into executable steps. |
-| Executing | Blue | Running the active step. |
-| Verifying | Amber | Validating step outcome. |
-| Reflecting | Red | Correcting a failed step via replan. |
-| Done | Green | Task completed successfully. |
-| Failed | Red | Task failed after maximum retries. |
+### Medium Term
+- **Multi-agent framework** — Base `Agent` class with independent planning loops and model assignment per agent type (Coding Agent, Writing Agent, Research Agent, Browser Agent)
+- **Master Orchestrator upgrade** — Goal decomposition into agent assignments rather than single-agent step sequences
+- **Parallel agent execution** — Independent agents running concurrently via async coordination
 
-```powershell
-cd ui
-npm install
-npm start
-```
+### Long Term
+- **Skill marketplace** — Shareable, versioned skill templates
+- **Multi-device memory sync** — PostgreSQL-backed preference and skill synchronization across machines
+- **macOS support** — Platform-specific capability implementations for macOS
+
+---
 
 ## License
 
