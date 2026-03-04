@@ -40,10 +40,7 @@ class CLICapability(BaseCapability):
             timeout_s = int(timeout_s)
 
             working_dir_raw = params.get("working_dir")
-            if working_dir_raw is None:
-                resolved_working_dir = Path.cwd()
-            else:
-                resolved_working_dir = self._resolve(str(working_dir_raw))
+            resolved_working_dir = self._resolve_dir(working_dir_raw)
             if not resolved_working_dir.exists():
                 return CapabilityResult.fail(
                     f"Working directory does not exist: {working_dir_raw or resolved_working_dir}"
@@ -96,8 +93,33 @@ class CLICapability(BaseCapability):
     def supports(self, operation: str) -> bool:
         return operation == "run_command"
 
-    def _resolve(self, path: str) -> Path:
-        value = str(path or "")
-        home = str(Path.home())
-        value = value.replace("$env:USERPROFILE", home).replace("$HOME", home)
-        return Path(value).expanduser()
+    def _resolve_dir(self, path: str | None) -> Path:
+        """Resolve directory path with proper environment variable substitution and anchoring."""
+        try:
+            # Step 1 — Handle None
+            if path is None:
+                return Path.home()
+
+            # Step 2 — Substitute known environment variable patterns
+            path_string = str(path)
+            path_string = path_string.replace("$env:USERPROFILE", str(Path.home()))
+            path_string = path_string.replace("%USERPROFILE%", str(Path.home()))
+            path_string = path_string.replace("$env:HOME", str(Path.home()))
+            path_string = path_string.replace("$HOME", str(Path.home()))
+            
+            # Handle ~ expansion (only if path starts with ~ or ~/)
+            if path_string.startswith("~") or path_string.startswith("~/"):
+                path_string = str(Path.home()) + path_string[1:] if path_string.startswith("~") else path_string[2:]
+
+            # Step 3 — Expand any remaining ~ using pathlib
+            result = Path(path_string).expanduser()
+
+            # Step 4 — Anchor relative paths to home directory
+            if result.is_absolute():
+                return result
+            else:
+                return Path.home() / result
+
+        except Exception as exc:
+            logger.warning("Directory resolution failed for '{}': {}", path, exc)
+            return Path.home()

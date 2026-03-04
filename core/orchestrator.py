@@ -120,7 +120,7 @@ class Orchestrator:
                                 step.step_type = reflection.modified_step.step_type
                                 step.preferred_layer = reflection.modified_step.preferred_layer
                                 step.attempts = 0  # Reset attempts
-                                step.status = StepStatus.RETRYING
+                                step.status = StepStatus.PENDING
                                 logger.info("Reflector modified step {}: {}", step.id, reflection.reason)
                                 continue
 

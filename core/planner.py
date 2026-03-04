@@ -73,7 +73,7 @@ class Planner:
                         step_dict.get("id"),
                     )
                 step_dict["depends_on"] = filtered
-            normalized_step_dicts.append(self._normalize_paths(step_dict))
+            normalized_step_dicts.append(step_dict)
 
         errors: list[str] = []
         validated_steps: list[Step] = []
@@ -223,6 +223,15 @@ class Planner:
             f"Package manager: winget\n"
             f"Path separator: \\\n"
             f"Home directory variable: $env:USERPROFILE\n"
+            f"User home directory (absolute): {Path.home().as_posix()}\n"
+            f"Common user directories:\n"
+            f"  Desktop    -> {(Path.home() / 'Desktop').as_posix()}\n"
+            f"  Documents  -> {(Path.home() / 'Documents').as_posix()}\n"
+            f"  Downloads  -> {(Path.home() / 'Downloads').as_posix()}\n"
+            f"  Pictures   -> {(Path.home() / 'Pictures').as_posix()}\n"
+            f"  Videos     -> {(Path.home() / 'Videos').as_posix()}\n"
+            f"  Music      -> {(Path.home() / 'Music').as_posix()}\n"
+            f"  AppData    -> {(Path.home() / 'AppData').as_posix()}\n"
             f"\n"
             f"Goal: {goal_context.goal}\n"
             f"Scope: {goal_context.scope}\n"
@@ -232,21 +241,6 @@ class Planner:
             f"{goal_context.working_directory or 'not specified'}\n"
             f"Complexity: {goal_context.estimated_complexity}\n"
         )
-
-    def _normalize_paths(self, step_dict: dict) -> dict:
-        params = step_dict.get("params")
-        if not isinstance(params, dict):
-            return step_dict
-
-        path_keys = {"path", "source", "destination", "target_path", "working_dir", "cwd"}
-        for key in path_keys:
-            value = params.get(key)
-            if isinstance(value, str) and value.strip():
-                try:
-                    params[key] = Path(value).as_posix()
-                except Exception:
-                    continue
-        return step_dict
 
     def _build_system_prompt(self) -> str:
         return (
@@ -284,9 +278,43 @@ class Planner:
             "  check_output_contains\n"
             "  none\n\n"
             "Path rules:\n"
-            "- Always use forward slashes in all path values.\n"
-            "- Never use backslashes.\n"
-            "- If working_directory is provided, use it as the base for all relative paths and expand to absolute paths.\n\n"
+            "PATH RESOLUTION RULES — follow these strictly:\n\n"
+            "1. Never generate bare relative paths like \"output\", \"testapp\",\n"
+            "   \"documents\", \"downloads\". These are meaningless without an\n"
+            "   anchor and will resolve to the wrong location.\n\n"
+            "2. Every path in every step must be absolute.\n\n"
+            "3. For well-known user directories, always use absolute\n"
+            "   paths provided in user message context above:\n"
+            "      'desktop'   -> use the Desktop absolute path provided\n"
+            "      'documents' -> use the Documents absolute path provided\n"
+            "      'downloads' -> use the Downloads absolute path provided\n"
+            "      'pictures'  -> use the Pictures absolute path provided\n"
+            "      'videos'    -> use the Videos absolute path provided\n"
+            "      'music'     -> use the Music absolute path provided\n\n"
+            "4. For nested paths user describes, compose them from\n"
+            "   known absolute base. Examples:\n"
+            "      \"documents folder in downloads\" ->\n"
+            "        {Downloads absolute path}/Documents\n"
+            "      \"output folder in documents\" ->\n"
+            "        {Documents absolute path}/output\n"
+            "      \"projects folder on desktop\" ->\n"
+            "        {Desktop absolute path}/projects\n"
+            "      \"testapp in downloads/projects\" ->\n"
+            "        {Downloads absolute path}/projects/testapp\n"
+            "      \"config folder in AppData\" ->\n"
+            "        {AppData absolute path}/config\n\n"
+            "5. If user mentions a folder path that is not one of the\n"
+            "   well-known directories and gives no explicit location,\n"
+            "   default to placing it under the user's home directory:\n"
+            "      \"a folder called myfolder\" ->\n"
+            "        {Home absolute path}/myfolder\n\n"
+            "6. If user gives an explicit absolute path, use it exactly\n"
+            "   as given without modification.\n\n"
+            "7. For working_dir params in CLI steps, always use the same\n"
+            "   absolute path resolution rules — never pass a bare name\n"
+            "   like \"testapp\" as working_dir.\n\n"
+            "8. Always use forward slashes in all generated paths even on\n"
+            "   Windows — the execution layer handles conversion.\n\n"
             "Ordering and dependencies:\n"
             "- Steps must be ordered so dependencies always come first.\n"
             "- depends_on must only reference earlier step IDs.\n"

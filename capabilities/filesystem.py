@@ -65,12 +65,35 @@ class FilesystemCapability(BaseCapability):
         return operation in self._SUPPORTED
 
     def _resolve(self, path: str) -> Path:
-        value = str(path or "")
-        home = str(Path.home())
-        value = value.replace("$env:USERPROFILE", home).replace("$HOME", home)
-        resolved = Path(value).expanduser()
-        logger.debug("Resolved path '{}' -> '{}'", path, resolved)
-        return resolved
+        """Resolve path with proper environment variable substitution and anchoring."""
+        try:
+            # Step 1 — Handle None or empty string
+            if path is None or path.strip() == "":
+                return Path.cwd()
+
+            # Step 2 — Substitute known environment variable patterns
+            path_string = str(path)
+            path_string = path_string.replace("$env:USERPROFILE", str(Path.home()))
+            path_string = path_string.replace("%USERPROFILE%", str(Path.home()))
+            path_string = path_string.replace("$env:HOME", str(Path.home()))
+            path_string = path_string.replace("$HOME", str(Path.home()))
+            
+            # Handle ~ expansion (only if path starts with ~ or ~/)
+            if path_string.startswith("~") or path_string.startswith("~/"):
+                path_string = str(Path.home()) + path_string[1:] if path_string.startswith("~") else path_string[2:]
+
+            # Step 3 — Expand any remaining ~ using pathlib
+            result = Path(path_string).expanduser()
+
+            # Step 4 — Anchor relative paths to home directory
+            if result.is_absolute():
+                return result
+            else:
+                return Path.home() / result
+
+        except Exception as exc:
+            logger.warning("Path resolution failed for '{}': {}", path, exc)
+            return Path.home()
 
     def _create_directory(self, params: dict[str, Any]) -> CapabilityResult:
         path = self._resolve(str(params.get("path", "")))
