@@ -75,6 +75,20 @@ class MemoryManager:
                 summary_parts.append(f"  {alias} -> {path}\n")
             summary_parts.append("\n")
         
+        # Add last executed paths from successful goals (last 3 only)
+        if recent_goals:
+            summary_parts.append("Last executed paths:\n")
+            for entry in recent_goals[:3]:  # Only last 3 entries
+                if entry.status == "success" and entry.execution_log:
+                    for log_entry in entry.execution_log:
+                        if log_entry.get("verified") and log_entry.get("verification_detail"):
+                            detail = log_entry["verification_detail"]
+                            if detail.startswith("Path exists: "):
+                                extracted_path = detail[12:]  # Remove "Path exists: " prefix
+                                summary_parts.append(f"  {entry.goal[:50]} → {extracted_path}\n")
+                                break  # Only take first path from each successful entry
+            summary_parts.append("\n")
+        
         # Add recently completed goals
         if recent_goals:
             summary_parts.append("Recently completed goals:\n")
